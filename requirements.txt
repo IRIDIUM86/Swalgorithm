@@ -1,0 +1,5 @@
+# --- AI Video Generation Client ---
+gradio_client==2.4.1
+
+# --- Optional Utilities ---
+python-dotenv==1.0.1
