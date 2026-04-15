@@ -4,7 +4,10 @@ import time
 import logging
 import json
 from colorama import Fore, Style, init
-from swarm import Agent, Swarm  # Ensure the 'swarm' package is installed
+import google.genai as genai
+import os
+import json
+import logging
 
 # Initialize colorama
 init(autoreset=True)
@@ -67,17 +70,21 @@ logging.basicConfig(
 
 def initialize_swarm_client():
     """
-    Initializes the Swarm client.
+    Initializes the Gemini client.
 
     Returns:
-        Swarm: An instance of the Swarm client.
+        Client: An instance of the Gemini client.
     """
     try:
-        client = Swarm()
-        logging.info("Swarm client initialized successfully.")
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            logging.error("Gemini API key not found.")
+            return None
+        client = genai.Client(api_key=api_key)
+        logging.info("Gemini client initialized successfully.")
         return client
     except Exception as e:
-        logging.error(f"Failed to initialize Swarm client: {e}")
+        logging.error(f"Failed to initialize Gemini client: {e}")
         sys.exit(1)
 
 client = initialize_swarm_client()
@@ -173,20 +180,20 @@ def initialize_swarm_agents():
             else:
                 full_instructions += f"\n\n{attr_name.replace('_',' ').title()}: {attr_value}"
 
-        swarm_agent = Agent(
-            name=name,
-            instructions=full_instructions
-        )
-        agents.append(swarm_agent)
+        agent_dict = {
+            'name': name,
+            'instructions': full_instructions
+        }
+        agents.append(agent_dict)
         agent_data_dict[name] = agent_data
 
     # Inform agents about other agents
     for agent in agents:
         other_agents_info = ""
         for other_agent in agents:
-            if other_agent.name != agent.name:
-                info = f"Name: {other_agent.name}"
-                o_data = agent_data_dict[other_agent.name]
+            if other_agent['name'] != agent['name']:
+                info = f"Name: {other_agent['name']}"
+                o_data = agent_data_dict[other_agent['name']]
                 sp = o_data.get('system_purpose', '')
                 info += f"\nSystem Purpose: {sp}"
 
@@ -204,11 +211,11 @@ def initialize_swarm_agents():
                         info += f"\n{attr_name.replace('_',' ').title()}: {attr_value}"
                 other_agents_info += f"\n\n{info}"
 
-        agent.instructions += (
+        agent['instructions'] += (
             f"\n\nYou are aware of the following other agents:\n{other_agents_info.strip()}"
         )
 
-    logging.info(f"Initialized {len(agents)} swarm agents.")
+    logging.info(f"Initialized {len(agents)} agents.")
     return agents
 
 # =============================================================================
@@ -238,11 +245,12 @@ def run_swarm_reasoning(user_prompt):
     # ------------------ Step 1: Discuss the Prompt ------------------
     print_header("Reasoning Step 1: Discussing the Prompt")
     for agent in agents:
-        response = client.run(
-            agent=agent,
-            messages=[{"role": "user", "content": user_prompt}]
+        prompt = f"{agent.instructions}\n\nUser prompt: {user_prompt}"
+        response = client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=prompt
         )
-        agent_opinion = response.messages[-1]['content']
+        agent_opinion = response.text.strip()
         opinions[agent.name] = agent_opinion
         color = get_agent_color(agent.name)
         print(color + f"{agent.name} response: {agent_opinion}" + Style.RESET_ALL)
@@ -251,13 +259,13 @@ def run_swarm_reasoning(user_prompt):
     print_header("Reasoning Step 2: Verifying Responses")
     for agent in agents:
         verify_prompt = (
-            f"Please verify the accuracy of your previous response:\n\n{opinions[agent.name]}"
+            f"{agent.instructions}\n\nPlease verify the accuracy of your previous response:\n\n{opinions[agent.name]}"
         )
-        response = client.run(
-            agent=agent,
-            messages=[{"role": "user", "content": verify_prompt}]
+        response = client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=verify_prompt
         )
-        verified_opinion = response.messages[-1]['content']
+        verified_opinion = response.text.strip()
         verified_opinions[agent.name] = verified_opinion
         color = get_agent_color(agent.name)
         print(color + f"{agent.name} verified response: {verified_opinion}" + Style.RESET_ALL)
@@ -267,14 +275,14 @@ def run_swarm_reasoning(user_prompt):
     for i, agent in enumerate(agents):
         other_agent = agents[(i + 1) % num_agents]
         critique_prompt = (
-            f"Please critique {other_agent.name}'s response "
+            f"{agent.instructions}\n\nPlease critique {other_agent.name}'s response "
             f"for depth and accuracy:\n\n{verified_opinions[other_agent.name]}"
         )
-        response = client.run(
-            agent=agent,
-            messages=[{"role": "user", "content": critique_prompt}]
+        response = client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=critique_prompt
         )
-        critique_text = response.messages[-1]['content']
+        critique_text = response.text.strip()
         critiques[agent.name] = critique_text
         color = get_agent_color(agent.name)
         print(color + f"{agent.name} critique on {other_agent.name}:\n{critique_text}\n" + Style.RESET_ALL)
@@ -284,15 +292,15 @@ def run_swarm_reasoning(user_prompt):
     for i, agent in enumerate(agents):
         other_agent = agents[(i + 1) % num_agents]
         refine_prompt = (
-            f"Please refine your response based on {other_agent.name}'s critique:\n\n"
+            f"{agent.instructions}\n\nPlease refine your response based on {other_agent.name}'s critique:\n\n"
             f"Your Original Response:\n{opinions[agent.name]}\n\n"
             f"{other_agent.name}'s Critique:\n{critiques[agent.name]}"
         )
-        response = client.run(
-            agent=agent,
-            messages=[{"role": "user", "content": refine_prompt}]
+        response = client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=refine_prompt
         )
-        refined_text = response.messages[-1]['content']
+        refined_text = response.text.strip()
         refined_opinions[agent.name] = refined_text
         color = get_agent_color(agent.name)
         print(color + f"{agent.name} refined response: {refined_text}" + Style.RESET_ALL)
@@ -328,45 +336,16 @@ def blend_responses(agent_responses, user_prompt):
     )
 
     try:
-        blender_agent = Agent(
-            name="Swarm Agent",
-            instructions="You are a collaborative AI assistant composed of multiple expert agents."
+        blender_instructions = "You are a collaborative AI assistant composed of multiple expert agents."
+        combined_prompt_full = f"{blender_instructions}\n\n{combined_prompt}"
+
+        response = client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=combined_prompt_full
         )
+        blended_reply = response.text.strip()
 
-        response = client.run(
-            agent=blender_agent,
-            messages=[{"role": "user", "content": combined_prompt}]
-        )
-        blended_reply = response.messages[-1]['content'].strip()
-
-        # Safely retrieve usage details
-        usage = getattr(response, 'usage', None)
-        if usage:
-            # Instead of usage.get("prompt_tokens", 0), use getattr
-            prompt_tokens = getattr(usage, 'prompt_tokens', 0)
-            completion_tokens = getattr(usage, 'completion_tokens', 0)
-            total_tokens = getattr(usage, 'total_tokens', 0)
-
-            # For nested details
-            prompt_tokens_details = getattr(usage, 'prompt_tokens_details', None)
-            if prompt_tokens_details:
-                cached_tokens = getattr(prompt_tokens_details, 'cached_tokens', 0)
-            else:
-                cached_tokens = 0
-
-            completion_tokens_details = getattr(usage, 'completion_tokens_details', None)
-            if completion_tokens_details:
-                reasoning_tokens = getattr(completion_tokens_details, 'reasoning_tokens', 0)
-            else:
-                reasoning_tokens = 0
-
-            logging.info(
-                f"Blending usage -> Prompt: {prompt_tokens}, Completion: {completion_tokens}, "
-                f"Total: {total_tokens}, Cached: {cached_tokens}, Reasoning: {reasoning_tokens}"
-            )
-        else:
-            logging.info("No usage details returned for blending.")
-
+        logging.info("Blended response generated successfully.")
         return blended_reply
     except Exception as e:
         logging.error(f"Error in blend_responses: {e}")

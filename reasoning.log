@@ -1,0 +1,22 @@
+2026-04-15 18:01:10,375 ERROR:Gemini API key not found in environment variable 'GEMINI_API_KEY'. Please set it and rerun.
+2026-04-15 18:01:24,728 INFO:AFC is enabled with max remote calls: 10.
+2026-04-15 18:01:24,820 INFO:HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent "HTTP/1.1 400 Bad Request"
+2026-04-15 18:01:24,820 ERROR:Error in agent 'TestAgent' reasoning: ClientError: 400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'API key not valid. Please pass a valid API key.', 'status': 'INVALID_ARGUMENT', 'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'API_KEY_INVALID', 'domain': 'googleapis.com', 'metadata': {'service': 'generativelanguage.googleapis.com'}}, {'@type': 'type.googleapis.com/google.rpc.LocalizedMessage', 'locale': 'en-US', 'message': 'API key not valid. Please pass a valid API key.'}]}}
+2026-04-15 18:01:24,821 INFO:Retrying in 1 seconds...
+2026-04-15 18:01:25,822 INFO:AFC is enabled with max remote calls: 10.
+2026-04-15 18:01:25,851 INFO:HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent "HTTP/1.1 400 Bad Request"
+2026-04-15 18:01:25,853 ERROR:Error in agent 'TestAgent' reasoning: ClientError: 400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'API key not valid. Please pass a valid API key.', 'status': 'INVALID_ARGUMENT', 'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'API_KEY_INVALID', 'domain': 'googleapis.com', 'metadata': {'service': 'generativelanguage.googleapis.com'}}, {'@type': 'type.googleapis.com/google.rpc.LocalizedMessage', 'locale': 'en-US', 'message': 'API key not valid. Please pass a valid API key.'}]}}
+2026-04-15 18:01:25,853 INFO:Retrying in 2 seconds...
+2026-04-15 18:01:27,854 INFO:AFC is enabled with max remote calls: 10.
+2026-04-15 18:01:27,879 INFO:HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent "HTTP/1.1 400 Bad Request"
+2026-04-15 18:01:27,881 ERROR:Error in agent 'TestAgent' reasoning: ClientError: 400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': 'API key not valid. Please pass a valid API key.', 'status': 'INVALID_ARGUMENT', 'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'API_KEY_INVALID', 'domain': 'googleapis.com', 'metadata': {'service': 'generativelanguage.googleapis.com'}}, {'@type': 'type.googleapis.com/google.rpc.LocalizedMessage', 'locale': 'en-US', 'message': 'API key not valid. Please pass a valid API key.'}]}}
+2026-04-15 18:01:27,882 ERROR:Agent 'TestAgent' reached maximum retry limit.
+2026-04-15 18:01:28,061 ERROR:Agents configuration file 'agents.json' not found.
+2026-04-15 18:01:28,065 ERROR:Error parsing 'agents.json': Invalid JSON: line 1 column 1 (char 0)
+2026-04-15 18:01:28,070 INFO:Reasoning session appended to reasoning_history.json.
+2026-04-15 18:02:37,439 ERROR:Agents configuration file 'agents.json' not found.
+2026-04-15 18:02:37,441 ERROR:Error parsing 'agents.json': Invalid JSON: line 1 column 1 (char 0)
+2026-04-15 18:02:37,473 INFO:Reasoning session appended to reasoning_history.json.
+2026-04-15 18:02:54,177 ERROR:Agents configuration file 'agents.json' not found.
+2026-04-15 18:02:54,179 ERROR:Error parsing 'agents.json': Invalid JSON: line 1 column 1 (char 0)
+2026-04-15 18:02:54,207 INFO:Reasoning session appended to reasoning_history.json.

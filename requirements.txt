@@ -4,7 +4,8 @@ gradio_client==2.4.1
 # --- Optional Utilities ---
 python-dotenv==1.0.1
 
-openai
+google-generativeai
+google-genai
 colorama
 tiktoken
 git+https://github.com/openai/swarm.git#egg=swarm

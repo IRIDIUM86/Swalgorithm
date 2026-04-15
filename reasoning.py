@@ -7,8 +7,8 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 
 from colorama import init, Fore, Style
-import tiktoken  # For accurate token counting
-from openai import OpenAI
+import google.genai as genai
+from gradio_client import Client, handle_file
 
 from swarm_middle_agent import (
     swarm_middle_agent_interface,
@@ -72,15 +72,15 @@ logging.basicConfig(
 )
 
 # =============================================================================
-# OpenAI Setup
+# Gemini Setup
 # =============================================================================
 
-api_key = os.environ.get("OPENAI_API_KEY")
+api_key = os.environ.get("GEMINI_API_KEY")
 if not api_key:
-    logging.error("OpenAI API key not found in environment variable 'OPENAI_API_KEY'. Please set it and rerun.")
+    logging.error("Gemini API key not found in environment variable 'GEMINI_API_KEY'. Please set it and rerun.")
     sys.exit(1)
 
-client = OpenAI(api_key=api_key)
+client = genai.Client(api_key=api_key)
 
 # =============================================================================
 # Constants & Configuration
@@ -351,35 +351,30 @@ class Agent:
 
     def _add_message(self, role, content, mode='reasoning'):
         """
-        Adds a message to the agent's message history and manages token limits.
+        Adds a message to the agent's message history.
 
         Args:
             role (str): The role of the message sender ('user', 'assistant').
             content (str): The message content.
             mode (str): The mode of operation ('reasoning' or 'chat').
         """
-        try:
-            encoding = tiktoken.get_encoding("cl100k_base")
-        except Exception as e:
-            logging.error(f"Error getting encoding: {e}")
-            raise e
-
         if mode == 'chat':
             self.chat_history.append({"role": role, "content": content})
-            total_tokens = sum(len(encoding.encode(msg['content'])) for msg in self.chat_history)
-            while total_tokens > MAX_CHAT_HISTORY_TOKENS and len(self.chat_history) > 1:
+            # Simplified token management for Gemini
+            total_chars = sum(len(msg['content']) for msg in self.chat_history)
+            while total_chars > 100000 and len(self.chat_history) > 1:  # Rough limit
                 self.chat_history.pop(0)
-                total_tokens = sum(len(encoding.encode(msg['content'])) for msg in self.chat_history)
+                total_chars = sum(len(msg['content']) for msg in self.chat_history)
         else:
             self.messages.append({"role": role, "content": content})
-            total_tokens = sum(len(encoding.encode(msg['content'])) for msg in self.messages)
-            while total_tokens > MAX_TOTAL_TOKENS and len(self.messages) > 1:
+            total_chars = sum(len(msg['content']) for msg in self.messages)
+            while total_chars > 100000 and len(self.messages) > 1:
                 self.messages.pop(0)
-                total_tokens = sum(len(encoding.encode(msg['content'])) for msg in self.messages)
+                total_chars = sum(len(msg['content']) for msg in self.messages)
 
     def _handle_reasoning_logic(self, prompt):
         """
-        Handles generating a response from the OpenAI API in non-chat mode.
+        Handles generating a response from the Gemini API in non-chat mode.
 
         Args:
             prompt (str): The prompt to send to the API.
@@ -394,45 +389,27 @@ class Agent:
         messages.extend(self.messages)
         messages.append({"role": "user", "content": prompt})
 
+        # Concatenate into a single prompt for Gemini
+        full_prompt = "\n".join([msg['content'] for msg in messages])
+
         start_time = time.time()
         retries = 0
         backoff = 1
 
         while retries < RETRY_LIMIT:
             try:
-                response = client.chat.completions.create(
-                    model="o1-2024-12-17",  # Adjust your model name here
-                    messages=messages
+                response = client.models.generate_content(
+                    model='gemini-1.5-flash',
+                    contents=full_prompt
                 )
                 end_time = time.time()
                 duration = end_time - start_time
 
-                assistant_reply = response.choices[0].message.content.strip()
+                assistant_reply = response.text.strip()
                 self._add_message("assistant", assistant_reply)
 
-                usage = getattr(response, 'usage', None)
-                if usage:
-                    # Use safe getattr calls to avoid .get
-                    prompt_tokens = getattr(usage, 'prompt_tokens', 0)
-                    completion_tokens = getattr(usage, 'completion_tokens', 0)
-                    total_tokens = getattr(usage, 'total_tokens', 0)
-
-                    prompt_tokens_details = getattr(usage, 'prompt_tokens_details', None)
-                    if prompt_tokens_details:
-                        cached_tokens = getattr(prompt_tokens_details, 'cached_tokens', 0)
-                    else:
-                        cached_tokens = 0
-
-                    completion_tokens_details = getattr(usage, 'completion_tokens_details', None)
-                    if completion_tokens_details:
-                        reasoning_tokens = getattr(completion_tokens_details, 'reasoning_tokens', 0)
-                    else:
-                        reasoning_tokens = 0
-
-                    print(self.color + f"{self.name} used {cached_tokens} cached tokens out of {prompt_tokens} prompt tokens." + Style.RESET_ALL)
-                    print(self.color + f"{self.name} generated {completion_tokens} completion tokens, including {reasoning_tokens} reasoning tokens. Total tokens used: {total_tokens}." + Style.RESET_ALL)
-                else:
-                    print(self.color + f"{self.name} (No usage details returned.)" + Style.RESET_ALL)
+                # Gemini doesn't provide token usage like OpenAI, so skip that
+                print(self.color + f"{self.name} generated response." + Style.RESET_ALL)
 
                 return assistant_reply, duration
             except Exception as e:
@@ -450,7 +427,7 @@ class Agent:
 
     def _handle_chat_interaction(self, user_message):
         """
-        Handles generating a response from the OpenAI API in chat mode.
+        Handles generating a response from the Gemini API in chat mode.
 
         Args:
             user_message (str): The user's message.
@@ -465,44 +442,26 @@ class Agent:
         messages.extend(self.chat_history)
         messages.append({"role": "user", "content": user_message})
 
+        # Concatenate into a single prompt for Gemini
+        full_prompt = "\n".join([msg['content'] for msg in messages])
+
         start_time = time.time()
         retries = 0
         backoff = 1
 
         while retries < RETRY_LIMIT:
             try:
-                response = client.chat.completions.create(
-                    model="gpt-4o",  # Use of gpt-4o model for chat interaction
-                    messages=messages
+                response = client.models.generate_content(
+                    model='gemini-1.5-flash',
+                    contents=full_prompt
                 )
                 end_time = time.time()
                 duration = end_time - start_time
 
-                assistant_reply = response.choices[0].message.content.strip()
+                assistant_reply = response.text.strip()
                 self._add_message("assistant", assistant_reply, mode='chat')
 
-                usage = getattr(response, 'usage', None)
-                if usage:
-                    prompt_tokens = getattr(usage, 'prompt_tokens', 0)
-                    completion_tokens = getattr(usage, 'completion_tokens', 0)
-                    total_tokens = getattr(usage, 'total_tokens', 0)
-
-                    prompt_tokens_details = getattr(usage, 'prompt_tokens_details', None)
-                    if prompt_tokens_details:
-                        cached_tokens = getattr(prompt_tokens_details, 'cached_tokens', 0)
-                    else:
-                        cached_tokens = 0
-
-                    completion_tokens_details = getattr(usage, 'completion_tokens_details', None)
-                    if completion_tokens_details:
-                        reasoning_tokens = getattr(completion_tokens_details, 'reasoning_tokens', 0)
-                    else:
-                        reasoning_tokens = 0
-
-                    print(self.color + f"{self.name} used {cached_tokens} cached tokens out of {prompt_tokens} prompt tokens." + Style.RESET_ALL)
-                    print(self.color + f"{self.name} generated {completion_tokens} completion tokens, including {reasoning_tokens} reasoning tokens. Total tokens used: {total_tokens}." + Style.RESET_ALL)
-                else:
-                    print(self.color + f"{self.name} (No usage details returned.)" + Style.RESET_ALL)
+                print(self.color + f"{self.name} generated chat response." + Style.RESET_ALL)
 
                 return assistant_reply, duration
             except Exception as e:
@@ -704,35 +663,13 @@ def blend_responses(agent_responses, user_prompt):
     )
 
     try:
-        response = client.chat.completions.create(
-            model="o1-2024-12-17",  # Adjust your model name here
-            messages=[{"role": "user", "content": combined_prompt}]
+        response = client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=combined_prompt
         )
+        blended_reply = response.text.strip()
 
-        blended_reply = response.choices[0].message.content.strip()
-
-        usage = getattr(response, 'usage', None)
-        if usage:
-            prompt_tokens = getattr(usage, 'prompt_tokens', 0)
-            completion_tokens = getattr(usage, 'completion_tokens', 0)
-            total_tokens = getattr(usage, 'total_tokens', 0)
-
-            prompt_tokens_details = getattr(usage, 'prompt_tokens_details', None)
-            if prompt_tokens_details:
-                cached_tokens = getattr(prompt_tokens_details, 'cached_tokens', 0)
-            else:
-                cached_tokens = 0
-
-            completion_tokens_details = getattr(usage, 'completion_tokens_details', None)
-            if completion_tokens_details:
-                reasoning_tokens = getattr(completion_tokens_details, 'reasoning_tokens', 0)
-            else:
-                reasoning_tokens = 0
-
-            print(Fore.GREEN + f"Blending used {cached_tokens} cached tokens out of {prompt_tokens} prompt tokens." + Style.RESET_ALL)
-            print(Fore.GREEN + f"Blending generated {completion_tokens} completion tokens, including {reasoning_tokens} reasoning tokens. Total tokens used: {total_tokens}." + Style.RESET_ALL)
-        else:
-            print(Fore.GREEN + "(No usage details returned for blending.)" + Style.RESET_ALL)
+        print(Fore.GREEN + "Blending completed." + Style.RESET_ALL)
 
         return blended_reply
     except Exception as e:
@@ -879,19 +816,67 @@ def chat_with_agents(agents):
             print(selected_agent.color + f"{selected_agent.name}: {assistant_reply}" + Style.RESET_ALL)
 
 # =============================================================================
+# Video Generation
+# =============================================================================
+
+def generate_video(prompt):
+    """
+    Generates a video using the Helios AOTI API with the given prompt.
+
+    Args:
+        prompt (str): The prompt for video generation.
+    """
+    try:
+        # Load environment variables
+        hf_space_id = os.environ.get("HF_SPACE_ID")
+        access_token = os.environ.get("Access_Token")
+
+        if not hf_space_id or not access_token:
+            print(Fore.RED + "HF_SPACE_ID or Access_Token not found in environment." + Style.RESET_ALL)
+            return
+
+        client = Client(hf_space_id, token=access_token)
+
+        result = client.predict(
+            mode="Text-to-Video",
+            prompt=prompt,
+            image_input=None,
+            video_input=None,
+            height=384,
+            width=640,
+            num_frames=81,
+            num_inference_steps=2,
+            seed=42,
+            is_amplify_first_chunk=True,
+            api_name="/generate_video"
+        )
+
+        print(Fore.GREEN + f"Video saved at: {result}" + Style.RESET_ALL)
+    except Exception as e:
+        print(Fore.RED + f"Error generating video: {e}" + Style.RESET_ALL)
+
+# =============================================================================
 # Reasoning Logic (with local memory + agent-to-agent help)
 # =============================================================================
 
 def reasoning_logic(agents):
     """
-    Handles the reasoning workflow, which includes discussing, verifying, critiquing,
-    refining, and blending responses from multiple agents.
+    Handles the prompt enhancement workflow using Creator, Critic, and Judge agents.
 
     Args:
-        agents (list): A list of Agent instances.
+        agents (list): A list of Agent instances (Creator, Critic, Judge).
     """
+    # Identify agents
+    creator = next((agent for agent in agents if agent.name == "Creator"), None)
+    critic = next((agent for agent in agents if agent.name == "Critic"), None)
+    judge = next((agent for agent in agents if agent.name == "Judge"), None)
+
+    if not creator or not critic or not judge:
+        print(Fore.RED + "Error: Missing required agents (Creator, Critic, Judge)." + Style.RESET_ALL)
+        return
+
     while True:
-        print(Fore.YELLOW + "Please enter your prompt (or type 'menu' to return, 'exit' to quit): " + Style.RESET_ALL, end='')
+        print(Fore.YELLOW + "Please enter your video prompt (or type 'menu' to return, 'exit' to quit): " + Style.RESET_ALL, end='')
         user_prompt = input().strip()
 
         if user_prompt.lower() == 'menu':
@@ -901,179 +886,56 @@ def reasoning_logic(agents):
             print(Fore.YELLOW + "Goodbye!" + Style.RESET_ALL)
             sys.exit(0)
 
-        # Handle special commands
-        if handle_special_commands(user_prompt, agents):
-            continue
-
         if len(user_prompt) <= 4:
             print(Fore.YELLOW + "Your prompt must be more than 4 characters. Please try again." + Style.RESET_ALL)
             continue
 
-        # Retrieve local memory relevant to user_prompt
-        local_context = get_local_context_for_prompt(user_prompt, is_swarm=False, max_records=3)
+        current_prompt = user_prompt
+        iteration = 0
+        max_iterations = 10  # Prevent infinite loop
 
-        # Incorporate context into the user prompt if available
-        extended_prompt = f"{user_prompt}\n\n--- Additional local memory context ---\n{local_context}" if local_context else user_prompt
+        while iteration < max_iterations:
+            iteration += 1
+            print_header(f"Iteration {iteration}: Enhancing Prompt")
 
-        # ============ Step 1: Discuss ============
-        print_header("Reasoning Step 1: Discussing the Prompt")
-        opinions = {}
-        durations = {}
-        for agent in agents:
-            # Example: Agent can ask another agent for help based on specific keyword
-            if "ask-other" in extended_prompt.lower() and len(agents) > 1:
-                helper_agent = agents[(agents.index(agent) + 1) % len(agents)]
-                help_response = agent.ask_other_agent(helper_agent, "Do you have any insights on this topic?")
-                full_opinion_prompt = f"{extended_prompt}\nHelper agent says: {help_response}"
-            else:
-                full_opinion_prompt = extended_prompt
+            # Creator enhances the prompt
+            print(Fore.CYAN + "Creator: Enhancing the prompt..." + Style.RESET_ALL)
+            enhanced_prompt, _ = process_agent_action(creator, 'discuss', f"Original prompt: {current_prompt}\nEnhance this prompt for a high-quality AI video.")
+            print(Fore.CYAN + f"Enhanced Prompt: {enhanced_prompt}" + Style.RESET_ALL)
 
-            opinion, duration = process_agent_action(agent, 'discuss', full_opinion_prompt)
-            opinions[agent.name] = opinion
-            durations[agent.name] = duration
+            # Judge evaluates
+            print(Fore.MAGENTA + "Judge: Evaluating the prompt..." + Style.RESET_ALL)
+            judge_response, _ = process_agent_action(judge, 'discuss', f"Evaluate this prompt: {enhanced_prompt}\nReturn 'PASS' or 'FAIL' with reasons.")
+            print(Fore.MAGENTA + f"Judge Response: {judge_response}" + Style.RESET_ALL)
 
-        total_discussion_time = sum(durations.values())
-        print_divider()
-        print(Fore.YELLOW + f"Total discussion time: {total_discussion_time:.2f} seconds." + Style.RESET_ALL)
-
-        # ============ Step 2: Verify ============
-        print_header("Reasoning Step 2: Verifying Responses")
-        verified_opinions = {}
-        verify_durations = {}
-
-        with ThreadPoolExecutor() as executor:
-            futures = {executor.submit(process_agent_action, agent, 'verify', opinions[agent.name]): agent for agent in agents}
-            for future in futures:
-                agent = futures[future]
-                verified_opinion, duration = future.result()
-                verified_opinions[agent.name] = verified_opinion
-                verify_durations[agent.name] = duration
-
-        total_verification_time = sum(verify_durations.values())
-        print_divider()
-        print(Fore.YELLOW + f"Total verification time: {total_verification_time:.2f} seconds." + Style.RESET_ALL)
-
-        # ============ Step 3: Critique ============
-        print_header("Reasoning Step 3: Critiquing Responses")
-        critiques = {}
-        critique_durations = {}
-        num_agents = len(agents)
-        for i, agent in enumerate(agents):
-            other_agent = agents[(i + 1) % num_agents]
-            critique, duration = process_agent_action(agent, 'critique', verified_opinions[other_agent.name])
-            critiques[agent.name] = critique
-            critique_durations[agent.name] = duration
-
-        total_critique_time = sum(critique_durations.values())
-        print_divider()
-        print(Fore.YELLOW + f"Total critique time: {total_critique_time:.2f} seconds." + Style.RESET_ALL)
-
-        # ============ Step 4: Refine ============
-        print_header("Reasoning Step 4: Refining Responses")
-        refined_opinions = {}
-        refine_durations = {}
-        for agent in agents:
-            refined_opinion, duration = process_agent_action(agent, 'refine', opinions[agent.name])
-            refined_opinions[agent.name] = refined_opinion
-            refine_durations[agent.name] = duration
-
-        total_refinement_time = sum(refine_durations.values())
-        print_divider()
-        print(Fore.YELLOW + f"Total refinement time: {total_refinement_time:.2f} seconds." + Style.RESET_ALL)
-
-        # ============ Step 5: Blend ============
-        print_header("Reasoning Step 5: Blending Responses")
-        agent_responses = [(agent.name, refined_opinions[agent.name]) for agent in agents]
-        start_blend_time = time.time()
-        optimal_response = blend_responses(agent_responses, user_prompt)
-        end_blend_time = time.time()
-        blend_duration = end_blend_time - start_blend_time
-
-        print_divider()
-        print_header("Optimal Response")
-        print(Fore.GREEN + optimal_response + Style.RESET_ALL)
-        print_divider()
-        print(Fore.YELLOW + f"Response generated in {blend_duration:.2f} seconds." + Style.RESET_ALL)
-
-        # ======= Feedback Loop ========
-        refine_count = 0
-        more_time = False
-        user_feedback = None
-        while refine_count < MAX_REFINEMENT_ATTEMPTS:
-            print(Fore.YELLOW + "\nWas this response helpful and accurate? (yes/no, 'menu' to main menu, 'exit' to quit): " + Style.RESET_ALL, end='')
-            user_feedback = input().strip().lower()
-
-            if user_feedback == 'menu':
-                print(Fore.YELLOW + "Returning to main menu." + Style.RESET_ALL)
-                save_reasoning_session(user_prompt, optimal_response, user_feedback, context_retained=False)
-                return
-            if user_feedback == 'exit':
-                print(Fore.YELLOW + "Goodbye!" + Style.RESET_ALL)
-                save_reasoning_session(user_prompt, optimal_response, user_feedback, context_retained=False)
-                sys.exit(0)
-
-            if user_feedback == 'yes':
-                print(Fore.YELLOW + "Thank you for your feedback!" + Style.RESET_ALL)
+            if "PASS" in judge_response.upper():
+                print(Fore.GREEN + "Prompt approved!" + Style.RESET_ALL)
+                final_prompt = enhanced_prompt
                 break
-            elif user_feedback != 'no':
-                print(Fore.YELLOW + "Please answer 'yes', 'no', 'menu' or 'exit'." + Style.RESET_ALL)
-                continue
+            else:
+                # Critic critiques
+                print(Fore.RED + "Judge failed. Critic: Providing feedback..." + Style.RESET_ALL)
+                critic_response, _ = process_agent_action(critic, 'discuss', f"Critique this prompt: {enhanced_prompt}\nFocus on hook, clarity, and API constraints.")
+                print(Fore.RED + f"Critic Feedback: {critic_response}" + Style.RESET_ALL)
 
-            # If user says no, attempt to refine again
-            refine_count += 1
-            if refine_count >= 2:
-                print(Fore.YELLOW + "Would you like the agents to take more time refining the response? (yes/no): " + Style.RESET_ALL, end='')
-                more_time_input = input().strip().lower()
-                more_time = (more_time_input == 'yes')
-
-            print(Fore.YELLOW + "We're sorry to hear that. Let's try to improve the response." + Style.RESET_ALL)
-
-            for agent in agents:
-                refined_opinion, duration = process_agent_action(
-                    agent, 'refine',
-                    refined_opinions[agent.name],
-                    more_time=more_time
-                )
-                refined_opinions[agent.name] = refined_opinion
-                refine_durations[agent.name] += duration
-
-            total_refinement_time = sum(refine_durations.values())
-            print_divider()
-            print(Fore.YELLOW + f"Total refinement time: {total_refinement_time:.2f} seconds." + Style.RESET_ALL)
-
-            # Re-blend the refined responses
-            print_divider()
-            print_header("Blending Refined Responses")
-            agent_responses = [(agent.name, refined_opinions[agent.name]) for agent in agents]
-            start_blend_time = time.time()
-            optimal_response = blend_responses(agent_responses, user_prompt)
-            end_blend_time = time.time()
-            blend_duration = end_blend_time - start_blend_time
-
-            print_divider()
-            print_header("New Optimal Response")
-            print(Fore.GREEN + optimal_response + Style.RESET_ALL)
-            print_divider()
-            print(Fore.YELLOW + f"Response generated in {blend_duration:.2f} seconds." + Style.RESET_ALL)
-
+                # Creator refines based on critic
+                current_prompt = f"Original: {user_prompt}\nPrevious enhanced: {enhanced_prompt}\nCritic feedback: {critic_response}\nRefine the prompt."
         else:
-            print(Fore.YELLOW + "Maximum refinement attempts reached." + Style.RESET_ALL)
+            print(Fore.YELLOW + "Maximum iterations reached. Using the last enhanced prompt." + Style.RESET_ALL)
+            final_prompt = enhanced_prompt
 
-        if not user_feedback:
-            user_feedback = "no"
+        print_header("Final Enhanced Prompt")
+        print(Fore.GREEN + final_prompt + Style.RESET_ALL)
 
-        print(Fore.YELLOW + "Would you like to retain this conversation context for the next prompt? (yes/no): " + Style.RESET_ALL, end='')
-        retain_context_input = input().strip().lower()
-        context_retained = (retain_context_input == 'yes')
-        if not context_retained:
-            for agent in agents:
-                agent.messages.clear()
-            print(Fore.YELLOW + "Conversation context has been reset." + Style.RESET_ALL)
-        else:
-            print(Fore.YELLOW + "Conversation context has been retained for the next prompt." + Style.RESET_ALL)
+        # Now, generate the video using the final prompt
+        print(Fore.YELLOW + "Generating video with the enhanced prompt..." + Style.RESET_ALL)
+        generate_video(final_prompt)
 
-        # Save final session
-        save_reasoning_session(user_prompt, optimal_response, user_feedback, context_retained)
+        # For social media posting, placeholder
+        print(Fore.YELLOW + "Video generated. (Social media posting not implemented yet.)" + Style.RESET_ALL)
+
+        # Save session
+        save_reasoning_session(user_prompt, final_prompt, "generated", context_retained=False)
 
 # =============================================================================
 # Save Reasoning Session

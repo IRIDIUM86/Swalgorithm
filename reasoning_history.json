@@ -1,0 +1,23 @@
+[
+  {
+    "timestamp": "2026-04-15 18:01:28",
+    "user_prompt": "Test prompt",
+    "final_response": "PASS",
+    "user_feedback": "generated",
+    "context_retained": false
+  },
+  {
+    "timestamp": "2026-04-15 18:02:37",
+    "user_prompt": "Test prompt",
+    "final_response": "PASS",
+    "user_feedback": "generated",
+    "context_retained": false
+  },
+  {
+    "timestamp": "2026-04-15 18:02:54",
+    "user_prompt": "Test prompt",
+    "final_response": "PASS",
+    "user_feedback": "generated",
+    "context_retained": false
+  }
+]
